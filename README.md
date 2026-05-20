@@ -121,7 +121,7 @@ pip install requests python-socketio pyqtgraph PySide6 python-dotenv
 
 * **PySide6** : Interface graphique Qt.
 * **requests** : Communication HTTP avec l’API REST.
-* **python-socketio : Flux temps réel bidirectionnel.
+* **python-socketio** : Flux temps réel bidirectionnel.
 * **pyqtgraph** : Graphiques temps réel haute performance.
 * **python-dotenv** : Chargement automatique du fichier `.env`.
 
