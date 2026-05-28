@@ -2,40 +2,30 @@
 
 Ce guide officiel est destiné aux administrateurs et développeurs du système de supervision des bornes de recharge. Il détaille pas à pas la configuration de l'environnement, la gestion des dépendances et le déploiement du tableau de bord d'administration cross-platform écrit en **Python 3** avec **PySide6**.
 
+> 💡 Ce programme a été conçu pour fonctionner sur les systèmes basé sur unix comme linux et mac os
 
 ## 📋 1. Prérequis Système & Dépendances Globales
 
-L'application requiert **Python 3.10** (ou une version supérieure) ainsi que l'accès au gestionnaire de paquets de votre système d'exploitation pour charger les composants graphiques natifs et les liaisons Qt6 (X11 / Wayland / Windows).
+L'application requiert **Python 3.10** (ou une version supérieure) ainsi que l'accès au gestionnaire de paquets de votre système d'exploitation pour charger les composants graphiques natifs et les liaisons Qt6 (X11 / Wayland).
 
-### 🪟 Microsoft Windows
-1. Téléchargez l’installateur stable depuis : https://www.python.org/downloads/
-2. Durant l’installation, cochez impérativement :
-```text
-[X] Add Python.exe to PATH
-```
-
-*Sinon, les commandes `python` et `pip` seront introuvables.*
-
-### 🐧 Distributions Linux
-
-#### Debian / Ubuntu / Linux Mint / Pop!_OS
+#### Debian / Ubuntu / Linux Mint
 
 ```bash
 sudo apt update
-sudo apt install python3 python3-pip python3-venv python3-pyside6 libegl1 -y
+sudo apt install python3 python3-pip python3-venv -y
 ```
 
 #### Fedora / RHEL / CentOS
 
 ```bash
-sudo dnf upgrade --refresh
-sudo dnf install python3 python3-pip python3-virtualenv -y
+sudo dnf upgrade --refresh -y
+sudo dnf install python3 python3-pip -y
 ```
 
-#### Arch Linux / Manjaro / EndeavourOS
+#### Arch Linux / EndeavourOS
 
 ```bash
-sudo pacman -Syu python python-pip python-virtualenv --noconfirm
+sudo pacman -Syu python python-pip --noconfirm
 ```
 
 ## 🔐 2. Configuration du Fichier d'Environnement (`.env`)
