@@ -1,15 +1,11 @@
 import sys, os, requests, socketio, pyqtgraph as pg
 from datetime import datetime
-from PySide6.QtWidgets import (
-    QApplication, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, 
-    QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, 
-    QDialog, QMessageBox, QLabel, QInputDialog, QComboBox, 
-    QFrame, QDoubleSpinBox, QLineEdit
-)
+from PySide6.QtWidgets import QApplication, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, QDialog, QMessageBox, QLabel, QInputDialog, QComboBox, QFrame, QDoubleSpinBox, QLineEdit, QAbstractItemView
 from PySide6.QtCore import Qt, QTimer, Slot, QObject, Signal
 from PySide6.QtGui import QColor
 
 API_URL = "https://recharge.cielnewton.fr/api"
+SOCKET_URL = "https://recharge.cielnewton.fr"
 ADMIN_CREDENTIALS = {"email": "", "password": ""}
 api = requests.Session()
 
@@ -22,9 +18,13 @@ if os.path.exists(env_path):
                 ADMIN_CREDENTIALS[k.strip()] = v.strip().strip('"')
 
 def format_api_date(date_str):
-    if not date_str: return ""
-    try: return datetime.fromisoformat(date_str.replace('Z', '+00:00')).strftime('%m-%d - %H:%M')
-    except: return date_str
+    if not date_str: 
+        return "N/A"
+    try: 
+        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        return dt.strftime('[%d-%m - %H:%M]')
+    except (ValueError, AttributeError):
+        return str(date_str)
 
 class SocketSignals(QObject):
     update_ui = Signal(str, dict)
@@ -32,7 +32,8 @@ class SocketSignals(QObject):
 class UserDetailsDialog(QDialog):
     def __init__(self, user_id, username, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Profil : {username}"); self.resize(550, 600)
+        self.setWindowTitle(f"Profil : {username}")
+        self.resize(550, 600)
         layout = QVBoxLayout(self)
         
         self.info_card = QFrame()
@@ -48,9 +49,12 @@ class UserDetailsDialog(QDialog):
         self.trans_table = QTableWidget(0, 3)
         self.trans_table.setHorizontalHeaderLabels(["Date", "Description", "Montant"])
         self.trans_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.trans_table.verticalHeader().setVisible(False); layout.addWidget(self.trans_table)
+        self.trans_table.verticalHeader().setVisible(False)
+        layout.addWidget(self.trans_table)
         
-        btn_close = QPushButton("Fermer"); btn_close.clicked.connect(self.accept); layout.addWidget(btn_close)
+        btn_close = QPushButton("Fermer")
+        btn_close.clicked.connect(self.accept)
+        layout.addWidget(btn_close)
         
         try:
             res = api.get(f"{API_URL}/auth/users/{user_id}/history").json()
@@ -77,7 +81,8 @@ class UserDetailsDialog(QDialog):
 class TabPrises(QWidget):
     def __init__(self):
         super().__init__()
-        self.signals = SocketSignals(); self.signals.update_ui.connect(self.update_row_ui)
+        self.signals = SocketSignals()
+        self.signals.update_ui.connect(self.update_row_ui)
         
         layout = QVBoxLayout(self)
         self.table = QTableWidget(0, 3)
@@ -85,162 +90,166 @@ class TabPrises(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.table.verticalHeader().setVisible(False); layout.addWidget(self.table)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        layout.addWidget(self.table)
 
-        btns = QHBoxLayout()
-        btn_add, btn_prov = QPushButton("➕ Ajouter une prise"), QPushButton("🚀 Config. Initiale (Local)")
+        layout_boutons = QHBoxLayout()
+        btn_add = QPushButton("➕ Ajouter une prise")
+        btn_prov = QPushButton("🚀 Config. Initiale (Local)")
         btn_prov.setStyleSheet("background-color: #8e44ad; color: white; font-weight: bold;")
-        btn_add.clicked.connect(self.add_prise); btn_prov.clicked.connect(self.provision_local_plug)
-        btns.addWidget(btn_add); btns.addWidget(btn_prov); layout.addLayout(btns)
+        btn_add.clicked.connect(self.add_prise)
+        btn_prov.clicked.connect(self.provision_local_plug)
+        layout_boutons.addWidget(btn_add)
+        layout_boutons.addWidget(btn_prov)
+        layout.addLayout(layout_boutons)
 
         self.sio = socketio.Client()
-        self.sio.on('power_update', lambda d: self.signals.update_ui.emit(str(d['plugId']), {'power': d['power']}))
-        self.sio.on('live_consumption', lambda d: self.signals.update_ui.emit(str(d['plugId']), {'energyWh': d['energyWh']}))
-        self.sio.on('status_update', lambda d: self.signals.update_ui.emit(str(d['plugId']), d))
-        try: self.sio.connect(API_URL.replace('/api', ''), socketio_path='/api/socket.io', transports=['websocket'])
+        self.sio.on('state_update', lambda data: self.signals.update_ui.emit(str(data.get('plugId')), {'state': data.get('state')}))
+        self.sio.on('power_update', lambda data: self.signals.update_ui.emit(str(data.get('plugId')), {'power': data.get('power', 0)}))
+        self.sio.on('status_update', lambda data: self.signals.update_ui.emit(str(data.get('plugId')), {'status': data.get('status')}))
+        self.sio.on('live_consumption', lambda data: self.signals.update_ui.emit(str(data.get('plugId')), {'energyWh': data.get('energyWh', 0), 'cost': data.get('cost', 0)}))
+
+        try: self.sio.connect(SOCKET_URL, socketio_path='/socket.io', transports=['websocket', 'polling'])
         except: pass
 
-        self.timer = QTimer(self); self.timer.timeout.connect(self.load_data); self.timer.start(5000); self.load_data()
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.load_data)
+        self.timer.start(5000)
+        self.load_data()
 
     def provision_local_plug(self):
-        dlg = QDialog(self); lay = QVBoxLayout(dlg); fields = {}
+        dialogue = QDialog(self)
+        layout_dialogue = QVBoxLayout(dialogue)
+        champs = {}
         config_list = [
             ("ssid", "Nom du Wi-Fi (SSID)", False), ("wifi_pass", "Mot de passe Wi-Fi", True),
             ("mqtt", "Serveur MQTT", False), ("mqtt_user", "Utilisateur MQTT", False), ("mqtt_pass", "Mot de passe MQTT", True)
         ]
-        for key, placeholder, is_pwd in config_list:
-            edit = QLineEdit(); edit.setPlaceholderText(placeholder)
-            if is_pwd: edit.setEchoMode(QLineEdit.Password)
-            lay.addWidget(edit); fields[key] = edit
+        for cle, placeholder, est_password in config_list:
+            edit = QLineEdit()
+            edit.setPlaceholderText(placeholder)
+            if est_password: edit.setEchoMode(QLineEdit.Password)
+            layout_dialogue.addWidget(edit)
+            champs[cle] = edit
             
-        btn = QPushButton("🚀 Envoyer"); btn.clicked.connect(dlg.accept); lay.addWidget(btn)
+        btn_envoyer = QPushButton("🚀 Envoyer")
+        btn_envoyer.clicked.connect(dialogue.accept)
+        layout_dialogue.addWidget(btn_envoyer)
 
-        if dlg.exec() == QDialog.Accepted:
+        if dialogue.exec() == QDialog.Accepted:
             try:
-                mqtt_cfg = {"server": fields["mqtt"].text(), "enable": True}
-                if fields["mqtt_user"].text(): mqtt_cfg["user"] = fields["mqtt_user"].text()
-                if fields["mqtt_pass"].text(): mqtt_cfg["pass"] = fields["mqtt_pass"].text()
+                mqtt_cfg = {"server": champs["mqtt"].text(), "enable": True}
+                if champs["mqtt_user"].text(): mqtt_cfg["user"] = champs["mqtt_user"].text()
+                if champs["mqtt_pass"].text(): mqtt_cfg["pass"] = champs["mqtt_pass"].text()
                 requests.post("http://192.168.33.1/rpc/Mqtt.SetConfig", json={"config": mqtt_cfg}, timeout=2)
-                requests.post("http://192.168.33.1/rpc/Wifi.SetConfig", json={"config": {"sta1": {"ssid": fields["ssid"].text(), "pass": fields["wifi_pass"].text(), "enable": True}}}, timeout=2)
+                requests.post("http://192.168.33.1/rpc/Wifi.SetConfig", json={"config": {"sta1": {"ssid": champs["ssid"].text(), "pass": champs["wifi_pass"].text(), "enable": True}}}, timeout=2)
                 QMessageBox.information(self, "Succès", "Configuration envoyée !")
             except: QMessageBox.critical(self, "Erreur", "Connexion à la prise échouée.")
 
     def load_data(self):
         try:
-            res = api.get(f"{API_URL}/plugs").json()
-            existing_ids = {str(p['id']) for p in res}
+            reponse = api.get(f"{API_URL}/plugs").json()
+            ids_existants = {str(prise.get('id')) for prise in reponse if prise.get('id') is not None}
             
-            for p in res:
-                pid = str(p['id'])
-                if self.find_row(pid) is None:
-                    row = self.table.rowCount(); self.table.insertRow(row)
-                    item = QTableWidgetItem(pid); item.setData(Qt.UserRole, p)
-                    self.table.setItem(row, 0, item); self.table.setItem(row, 1, QTableWidgetItem("..."))
+            for prise in reponse:
+                id_prise = str(prise.get('id'))
+                if id_prise == 'None': continue
                     
-                    act = QWidget(); lay = QHBoxLayout(act); lay.setContentsMargins(4, 2, 4, 2); lay.setSpacing(6)
-                    b1, b2, b3, b4 = QPushButton("QR"), QPushButton("🔧"), QPushButton("⚙️"), QPushButton("🛑")
-                    b4.setStyleSheet("background:#c0392b; color: white;"); b4.hide()
+                if self.find_row(id_prise) is None:
+                    ligne = self.table.rowCount()
+                    self.table.insertRow(ligne)
                     
-                    b1.clicked.connect(lambda _, x=pid: self.show_qr(x))
-                    b2.clicked.connect(lambda _, x=pid: api.post(f"{API_URL}/plugs/{x}/maintenance"))
-                    b3.clicked.connect(lambda _, x=pid: self.set_limit(x))
-                    b4.clicked.connect(lambda _, x=pid: api.post(f"{API_URL}/plugs/{x}/force-stop"))
+                    item_id = QTableWidgetItem(id_prise)
+                    item_id.setData(Qt.UserRole, prise)
+                    self.table.setItem(ligne, 0, item_id)
                     
-                    for b in [b1, b2, b3, b4]: lay.addWidget(b)
-                    self.table.setCellWidget(row, 2, act)
-                self.update_row_ui(pid, p)
+                    item_statut = QTableWidgetItem("...")
+                    item_statut.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+                    self.table.setItem(ligne, 1, item_statut)
+                    
+                    widget_actions = QWidget()
+                    layout_actions = QHBoxLayout(widget_actions)
+                    layout_actions.setContentsMargins(4, 2, 4, 2)
+                    layout_actions.setSpacing(6)
+                    
+                    btn_qr, btn_maint, btn_lim, btn_stop = QPushButton("QR"), QPushButton("🔧"), QPushButton("⚙️"), QPushButton("🛑")
+                    btn_stop.setStyleSheet("background:#c0392b; color: white;")
+                    btn_stop.hide()
+                    
+                    btn_qr.clicked.connect(lambda _, x=id_prise: self.show_qr(x))
+                    btn_maint.clicked.connect(lambda _, x=id_prise: api.post(f"{API_URL}/plugs/{x}/maintenance"))
+                    btn_lim.clicked.connect(lambda _, x=id_prise: self.set_limit(x))
+                    btn_stop.clicked.connect(lambda _, x=id_prise: api.post(f"{API_URL}/plugs/{x}/force-stop"))
+                    
+                    for b in [btn_qr, btn_maint, btn_lim, btn_stop]: layout_actions.addWidget(b)
+                    self.table.setCellWidget(ligne, 2, widget_actions)
+                    
+                self.update_row_ui(id_prise, prise)
 
-            for r in reversed(range(self.table.rowCount())):
-                if self.table.item(r, 0).text() not in existing_ids: self.table.removeRow(r)
+            for ligne in reversed(range(self.table.rowCount())):
+                if self.table.item(ligne, 0).text() not in ids_existants: self.table.removeRow(ligne)
         except: pass
 
-    def find_row(self, pid):
-        for r in range(self.table.rowCount()):
-            if self.table.item(r, 0).text() == pid: return r
+    def find_row(self, id_prise):
+        for ligne in range(self.table.rowCount()):
+            if self.table.item(ligne, 0).text() == id_prise: return ligne
         return None
 
     @Slot(str, dict)
-    def update_row_ui(self, pid, data):
-        row = self.find_row(pid)
-        if row is None: return
-        item = self.table.item(row, 0); curr = item.data(Qt.UserRole) or {}; curr.update(data); item.setData(Qt.UserRole, curr)
-        status, state = curr.get('status', 'libre'), curr.get('state', False)
-        elec = "⚡ ON" if state else "OFF"
+    def update_row_ui(self, id_prise, data):
+        ligne = self.find_row(id_prise)
+        if ligne is None: return
+        
+        item_id = self.table.item(ligne, 0)
+        configuration_courante = item_id.data(Qt.UserRole) or {}
+        configuration_courante.update(data)
+        item_id.setData(Qt.UserRole, configuration_courante)
+        
+        statut = configuration_courante.get('status', 'libre')
 
-        if status == "occupied":
-            txt, color = f"👤 {curr.get('username', 'Inconnu')} ({elec}) | ⚡ {float(curr.get('power', curr.get('powerW', 0))):.0f}W", "#f39c12"
-        elif status == "hs": txt, color = "🔧 Maintenance (Hors Service)", "#e74c3c"
-        else: txt, color = f"Libre ({elec})", "#2ecc71"
+        if statut == "occupied":
+            puissance = float(configuration_courante.get('power', 0))
+            energie_wh = float(configuration_courante.get('energyWh', 0))
+            cout = float(configuration_courante.get('cost', 0))
+            # Texte épuré :
+            texte_affichage = f"👤 {configuration_courante.get('username', 'Inconnu')} [⚡ {puissance:.0f} W | 📈 {energie_wh:.1f} Wh | 💰 {cout:.2f} € ]"
+            couleur_texte = "#f39c12"
+        elif statut == "hs":
+            texte_affichage = "🔧 Maintenance [hors service]"
+            couleur_texte = "#e74c3c"
+        else:
+            texte_affichage = "🟢 Libre"
+            couleur_texte = "#2ecc71"
 
-        self.table.item(row, 1).setText(txt); self.table.item(row, 1).setForeground(QColor(color))
-        self.table.cellWidget(row, 2).layout().itemAt(3).widget().setVisible(status == "occupied")
+        self.table.item(ligne, 1).setText(texte_affichage)
+        self.table.item(ligne, 1).setForeground(QColor(couleur_texte))
+        
+        widget_cellule = self.table.cellWidget(ligne, 2)
+        if widget_cellule and widget_cellule.layout():
+            bouton_stop = widget_cellule.layout().itemAt(3).widget()
+            if bouton_stop: bouton_stop.setVisible(statut == "occupied")
 
-    def set_limit(self, pid):
-        val, ok = QInputDialog.getInt(self, "Limite", "Watts max :", 2500, 0, 5000)
-        if ok: api.post(f"{API_URL}/plugs/{pid}/configure", json={"powerLimit": val})
+    def set_limit(self, id_prise):
+        valeur, ok = QInputDialog.getInt(self, "Limite", "Watts max :", 2500, 0, 5000)
+        if ok: api.post(f"{API_URL}/plugs/{id_prise}/configure", json={"powerLimit": valeur})
 
-    def show_qr(self, pid):
-        dlg = QDialog(self); lay = QVBoxLayout(dlg); lab = QLabel()
+    def show_qr(self, id_prise):
+        dialogue = QDialog(self)
+        layout_dialogue = QVBoxLayout(dialogue)
+        label_image = QLabel()
         from PySide6.QtGui import QPixmap
-        px = QPixmap(); px.loadFromData(api.get(f"{API_URL}/plugs/{pid}/qrcode").content)
-        lab.setPixmap(px.scaled(250, 250)); lay.addWidget(lab); dlg.exec()
+        pixmap = QPixmap()
+        try:
+            pixmap.loadFromData(api.get(f"{API_URL}/plugs/{id_prise}/qrcode").content)
+            label_image.setPixmap(pixmap.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        except: label_image.setText("Erreur QR Code")
+        layout_dialogue.addWidget(label_image)
+        dialogue.exec()
 
     def add_prise(self):
-        nom, ok = QInputDialog.getText(self, "Ajouter", "ID prise :")
-        if ok and nom: api.post(f"{API_URL}/plugs", json={"plugId": nom})
-
-class TabConso(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.history_vals, self.history_dates = [], []
-        layout = QVBoxLayout(self)
-        self.sel = QComboBox(); self.sel.currentIndexChanged.connect(self.load_history)
-        layout.addWidget(QLabel("Consommation par utilisateur :")); layout.addWidget(self.sel)
-        
-        self.graph = pg.PlotWidget(); self.graph.setBackground('#2a2a30')
-        self.graph.showGrid(x=True, y=True, alpha=0.3); self.graph.setLabel('left', "Consommation", units="Wh")
-        layout.addWidget(self.graph)
-        
-        self.t_live = QTimer(self); self.t_live.timeout.connect(self.update_live); self.t_live.start(2000)
-        self.t_users = QTimer(self); self.t_users.timeout.connect(self.load_users); self.t_users.start(10000)
-        self.load_users()
-    
-    def load_users(self):
-        try:
-            res = api.get(f"{API_URL}/auth/users").json(); cur = self.sel.currentData()
-            self.sel.blockSignals(True); self.sel.clear()
-            for u in [x for x in res if x['username'] != 'Admin']: self.sel.addItem(u['username'], u['id'])
-            if cur:
-                idx = self.sel.findData(cur); self.sel.setCurrentIndex(idx if idx >= 0 else 0)
-            self.sel.blockSignals(False)
-        except: pass
-
-    def load_history(self):
-        uid = self.sel.currentData()
-        if not uid: return
-        try:
-            res = api.get(f"{API_URL}/auth/users/{uid}/history").json()
-            data = sorted(res.get('history', []), key=lambda x: x.get('start_time', ''))
-            self.history_vals = [float(h.get("energy_kwh") or 0) * 1000 for h in data]
-            self.history_dates = [format_api_date(h.get('start_time') or h.get('created_at')) for h in data]
-            self.update_live()
-        except: pass
-
-    def update_live(self):
-        uid = self.sel.currentData()
-        if not uid: return
-        try:
-            res = api.get(f"{API_URL}/plugs").json(); live_val, active = 0, False
-            for p in res:
-                if str(p.get('current_session', {}).get('user_id')) == str(uid):
-                    live_val, active = float(p.get('energyWh') or 0), True; break
-            vals, dates = list(self.history_vals), list(self.history_dates)
-            if active: vals.append(live_val); dates.append(datetime.now().strftime('%m-%d - %H:%M'))
-            self.graph.clear()
-            if vals:
-                self.graph.getAxis('bottom').setTicks([[(i, dates[i]) for i in range(0, len(dates), max(1, len(dates)//5))]])
-                self.graph.plot(list(range(len(vals))), vals, pen=pg.mkPen('#2ecc71', width=2))
-        except: pass
+        identifiant, ok = QInputDialog.getText(self, "Ajouter", "ID prise :")
+        if ok and identifiant: api.post(f"{API_URL}/plugs", json={"plugId": identifiant})
 
 class TabUsers(QWidget):
     def __init__(self):
@@ -251,7 +260,9 @@ class TabUsers(QWidget):
         self.tableau.setHorizontalHeaderLabels(["Utilisateurs", "Solde (€)", "Détails"])
         self.tableau.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tableau.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.tableau.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents); layout.addWidget(self.tableau)
+        self.tableau.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.tableau.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        layout.addWidget(self.tableau)
         
         btns = QHBoxLayout()
         for name, color, cb in zip(["➕ Nouveau", "✏️ Modifier", "🗑️ Supprimer"], ["#27ae60", "#e67e22", "#c0392b"], [self.add, self.edit, self.delete]):
@@ -267,7 +278,7 @@ class TabUsers(QWidget):
                 for i, u in enumerate(users):
                     self.tableau.setItem(i, 0, QTableWidgetItem(u['username']))
                     self.tableau.setItem(i, 1, QTableWidgetItem(f"{float(u['balance']):.2f} €"))
-                    btn = QPushButton("Détails"); btn.setStyleSheet("padding: 2px 10px; font-weight: normal;")
+                    btn = QPushButton("ℹ️")
                     btn.clicked.connect(lambda _, uid=u['id'], name=u['username']: UserDetailsDialog(uid, name, self).exec())
                     self.tableau.setCellWidget(i, 2, btn)
             else:
@@ -288,32 +299,15 @@ class TabUsers(QWidget):
         row = self.tableau.currentRow()
         if row < 0 or row not in self.users_data: return
         u = self.users_data[row]; dlg = QDialog(self); dlg.setWindowTitle("Modifier"); lay = QVBoxLayout(dlg)
-        
-        # Découpage automatique du username ("Prénom Nom")
         parts = u['username'].split(" ", 1)
-        prenom_val = parts[0] if len(parts) > 0 else ""
-        nom_val = parts[1] if len(parts) > 1 else ""
-        email_val = u.get('email', '')
-
-        # Si l'email est manquant dans l'index global, on va chercher l'info complète sur l'API
-        if not email_val:
-            try:
-                user_res = api.get(f"{API_URL}/auth/users/{u['id']}/history").json()
-                email_val = user_res.get('user', {}).get('email', '')
-            except: pass
-
-        prenom, nom, mail = QLineEdit(prenom_val), QLineEdit(nom_val), QLineEdit(email_val)
+        prenom, nom, mail = QLineEdit(parts[0] if len(parts) > 0 else ""), QLineEdit(parts[1] if len(parts) > 1 else ""), QLineEdit()
+        try: mail.setText(api.get(f"{API_URL}/auth/users/{u['id']}/history").json().get('user', {}).get('email', ''))
+        except: pass
         arg, pwd = QDoubleSpinBox(), QLineEdit()
-        
-        mail.setPlaceholderText("exemple@gmail.com")
         arg.setRange(-1000, 10000); arg.setValue(float(u.get('balance', 0)))
         pwd.setPlaceholderText("Laisser vide pour ne pas changer"); pwd.setEchoMode(QLineEdit.Password)
-        
-        # Ajout des composants de manière ordonnée et explicite
-        components = [("Prénom :", prenom), ("Nom :", nom), ("Email / Gmail :", mail), ("Solde (€) :", arg), ("Mot de passe :", pwd)]
-        for txt, w in components:
+        for txt, w in [("Prénom :", prenom), ("Nom :", nom), ("Email :", mail), ("Solde (€) :", arg), ("Mot de passe :", pwd)]:
             lay.addWidget(QLabel(f"<b>{txt}</b>")); lay.addWidget(w)
-            
         btn = QPushButton("Enregistrer"); btn.clicked.connect(dlg.accept); lay.addWidget(btn)
         if dlg.exec() == QDialog.Accepted:
             payload = {"username": f"{prenom.text().strip()} {nom.text().strip()}".strip(), "email": mail.text().strip(), "balance": float(arg.value())}
@@ -334,6 +328,7 @@ class TabMaintenance(QWidget):
         self.tableau.setHorizontalHeaderLabels(["Prise", "Alerte"])
         self.tableau.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.tableau.verticalHeader().setVisible(False); layout.addWidget(self.tableau)
+        self.tableau.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.timer = QTimer(self); self.timer.timeout.connect(self.fetch_alerts); self.timer.start(10000); self.fetch_alerts()
 
     def fetch_alerts(self):
@@ -346,13 +341,95 @@ class TabMaintenance(QWidget):
                 self.tableau.setItem(row, 1, QTableWidgetItem(f"{alert.get('alert_reason', 'Erreur')}"))
         except: pass
 
+class TabConso(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.history_vals, self.history_dates = [], []
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Consommation par utilisateur :"))
+
+        self.sel = QComboBox()
+        self.sel.currentIndexChanged.connect(self.load_history)
+        layout.addWidget(self.sel)
+
+        self.graph = pg.PlotWidget(background='#2a2a30')
+        self.graph.showGrid(x=True, y=True, alpha=0.3)
+        self.graph.setLabel('left', "Consommation", units="Wh")
+        layout.addWidget(self.graph)
+
+        QTimer(self).timeout.connect(self.load_users) or None
+        t_users = QTimer(self); t_users.timeout.connect(self.load_users); t_users.start(10000)
+        t_live  = QTimer(self); t_live.timeout.connect(self.update_live);  t_live.start(2000)
+        self.load_users()
+
+    def load_users(self):
+        try:
+            res = api.get(f"{API_URL}/auth/users").json()
+            cur = self.sel.currentData()
+            self.sel.blockSignals(True)
+            self.sel.clear()
+            for u in res:
+                if u.get('username') != 'Admin':
+                    self.sel.addItem(u['username'], u['id'])
+            idx = self.sel.findData(cur)
+            self.sel.setCurrentIndex(idx if idx >= 0 else 0)
+            self.sel.blockSignals(False)
+        except: pass
+
+    def load_history(self):
+        uid = self.sel.currentData()
+        if not uid: return
+        try:
+            data = sorted(
+                api.get(f"{API_URL}/auth/users/{uid}/history").json().get('history', []),
+                key=lambda x: x.get('start_time', '')
+            )
+            self.history_vals  = [float(h.get("energy_kwh") or 0) * 1000 for h in data]
+            self.history_dates = [format_api_date(h.get('start_time') or h.get('created_at')) for h in data]
+            self.update_live()
+        except: pass
+
+    def update_live(self):
+        uid = self.sel.currentData()
+        if not uid: return
+        try:
+            vals, dates = list(self.history_vals), list(self.history_dates)
+
+            # Ajoute le point live si une session est active pour cet user
+            for p in api.get(f"{API_URL}/plugs").json():
+                if str(p.get('current_session', {}).get('user_id')) == str(uid):
+                    vals.append(float(p.get('energyWh') or 0))
+                    dates.append(datetime.now().strftime('%m-%d %H:%M'))
+                    break
+
+            self.graph.clear()
+            if not vals: return
+
+            n = len(dates)
+            nb = min(9, n)
+            step = max(1, len(dates) // 6)
+            ticks = [(i, dates[i]) for i in range(0, len(dates), step)]
+            if len(dates) > 0 and ticks[-1][0] != len(dates) - 1:
+                ticks.append((len(dates) - 1, dates[-1]))
+            self.graph.getAxis('bottom').setTicks([ticks])
+
+            self.graph.getAxis('bottom').setTicks([ticks])
+            self.graph.setXRange(-0.5, n - 0.5, padding=0)
+            self.graph.plot(range(n), vals,
+                            pen=pg.mkPen('#2ecc71', width=2),
+                            symbol='o', symbolSize=5, symbolBrush='#2ecc71')
+        except: pass
+
 class Dashboard(QTabWidget):    
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Dashboard Admin"); self.resize(848, 480)
         self.setDocumentMode(True); self.tabBar().setExpanding(True)
-        self.addTab(TabPrises(), "🔌 Prises"); self.addTab(TabConso(), "📈 Consommation")
-        self.addTab(TabUsers(), "👤 Utilisateurs"); self.addTab(TabMaintenance(), "🛠️ Maintenance")
+        self.addTab(TabPrises(), "🔌 Prises")
+        self.addTab(TabConso(), "📈 Consommation")
+        self.addTab(TabUsers(), "👤 Utilisateurs")
+        self.addTab(TabMaintenance(), "🛠️ Maintenance")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)    
@@ -363,9 +440,17 @@ if __name__ == '__main__':
         QTabBar::tab { background: #2b2b33; padding: 8px; }
         QTabBar::tab:selected { background: #1c1c21; border-bottom: 3px solid #287aad; }    
     """)
+
     try:
         res = api.post(f"{API_URL}/auth/login", json=ADMIN_CREDENTIALS, timeout=5)
+        
         if res.status_code == 200:
             api.headers.update({"Authorization": f"Bearer {res.json().get('token')}"})
-            win = Dashboard(); win.show(); sys.exit(app.exec())
-    except: pass
+            win = Dashboard()
+            win.show()
+            sys.exit(app.exec())
+        else:
+            QMessageBox.warning(None, "Connexion", "Identifiants incorrects ou accès refusé.")
+            
+    except requests.exceptions.RequestException:
+        QMessageBox.critical(None, "Erreur Réseau", "Impossible de contacter le serveur. Vérifiez votre connexion.")
